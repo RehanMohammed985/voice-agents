@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>voice-agents · mission console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,400&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#0A0A0D;--ink2:#0E0F14;--bone:#EAE3D4;--amber:#FF8A3D;--amber-d:#D9670F;--mint:#63E6B0;
+ --red:#FF5C6C;--blue:#5AA9FF;--iris:#948CFF;--dim:#8B8F9B;--dim2:#565A67;--hair:#22242E;--hair2:#2C2F3A;
+ --serif:'Fraunces',Georgia,serif;--sans:'Space Grotesk',sans-serif;--mono:'JetBrains Mono',monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:#E9E7E1;font-family:var(--sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+::selection{background:var(--amber);color:#160b02}
+.grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>")}
+.warm{position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(110% 80% at 80% -10%,rgba(255,138,61,.09),transparent 55%)}
+.wrap{position:relative;z-index:2;max-width:1180px;margin:0 auto;padding:0 clamp(18px,4vw,44px)}
+
+header{display:flex;align-items:baseline;justify-content:space-between;padding:26px 0 0;flex-wrap:wrap;gap:10px}
+.brand{display:flex;align-items:center;gap:11px}
+.brand svg{width:24px;height:24px}
+.wm{font-family:var(--serif);font-size:20px;font-weight:500}
+.wm sup{font-family:var(--mono);font-size:9px;color:var(--amber);margin-left:3px}
+.hstat{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);display:flex;gap:22px;align-items:center}
+.bulb{width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 8px var(--mint);display:inline-block;margin-right:7px;animation:bp 2.4s infinite}
+@keyframes bp{0%,100%{opacity:1}50%{opacity:.35}}
+
+.hero{padding:54px 0 40px;border-bottom:1px solid var(--hair)}
+.kick{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--amber);display:flex;gap:12px;align-items:center;margin-bottom:20px}
+.kick .ln{width:40px;height:1px;background:var(--amber);opacity:.6}
+h1{font-family:var(--serif);font-weight:300;font-size:clamp(34px,5.4vw,58px);line-height:1;letter-spacing:-.03em;margin:0}
+h1 em{font-style:italic;color:var(--amber)}
+.sub{color:var(--dim);max-width:64ch;margin-top:16px;font-size:15.5px}
+
+.grid{display:grid;grid-template-columns:1.15fr .85fr;gap:34px;padding:44px 0}
+@media(max-width:920px){.grid{grid-template-columns:1fr}}
+.panel{position:relative;border:1px solid var(--hair);background:linear-gradient(180deg,#0F1117,var(--ink2))}
+.panel .brk{position:absolute;width:13px;height:13px;border:1px solid var(--hair2)}
+.b1{top:-1px;left:-1px;border-right:0;border-bottom:0}.b2{top:-1px;right:-1px;border-left:0;border-bottom:0}
+.b3{bottom:-1px;left:-1px;border-right:0;border-top:0}.b4{bottom:-1px;right:-1px;border-left:0;border-top:0}
+.phead{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--hair);font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim2)}
+.phead b{color:var(--amber);font-weight:500}
+.pbody{padding:20px 18px}
+
+label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);margin:16px 0 7px}
+label:first-child{margin-top:0}
+textarea,input[type=text],select{width:100%;background:#08090D;border:1px solid var(--hair2);color:#E9E7E1;
+ font-family:var(--mono);font-size:12.5px;padding:11px 12px;outline:none;transition:border-color .25s;border-radius:0}
+textarea{min-height:150px;line-height:1.7;resize:vertical}
+textarea:focus,input:focus,select:focus{border-color:var(--amber)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:640px){.two,.three{grid-template-columns:1fr}}
+
+.btn{font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:500;
+ padding:13px 22px;border:1px solid var(--hair2);background:transparent;color:#E9E7E1;cursor:pointer;transition:.25s}
+.btn:hover{border-color:var(--amber);color:var(--amber)}
+.btn.primary{background:var(--amber);border-color:var(--amber);color:#160B02}
+.btn.primary:hover{filter:brightness(1.08);color:#160B02;box-shadow:0 12px 30px -14px rgba(255,138,61,.6)}
+.btn.danger{border-color:rgba(255,92,108,.5);color:var(--red)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:20px}
+
+.switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.switch input{display:none}
+.tog{width:38px;height:20px;border:1px solid var(--hair2);position:relative;transition:.25s;flex:0 0 38px}
+.tog::after{content:'';position:absolute;top:3px;left:3px;width:12px;height:12px;background:var(--dim2);transition:.25s}
+.switch input:checked+.tog{border-color:var(--red)}
+.switch input:checked+.tog::after{left:21px;background:var(--red)}
+.switch .lv{color:var(--dim2)}.switch input:checked~.lv{color:var(--red)}
+
+.engbadge{font-family:var(--mono);font-size:10px;padding:3px 8px;letter-spacing:.06em}
+.eng-ok{background:rgba(99,230,176,.12);color:var(--mint)}
+.eng-no{background:rgba(86,90,103,.16);color:var(--dim)}
+
+.term{background:#07080B;border-top:1px solid var(--hair);font-family:var(--mono);font-size:11.5px;
+ height:250px;overflow-y:auto;padding:14px 18px;line-height:1.85}
+.term .t{color:var(--dim2);margin-right:10px}
+.term .would{color:var(--blue)}.term .err{color:var(--red)}.term .ok{color:var(--mint)}.term .hold{color:var(--dim2)}
+.term .live{color:var(--amber)}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim2);
+ text-align:left;padding:10px 12px;border-bottom:1px solid var(--hair)}
+td{padding:10px 12px;border-bottom:1px solid rgba(34,36,46,.55);vertical-align:top}
+td.mono{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.pill{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;font-weight:500}
+.pl-dry{background:rgba(90,169,255,.12);color:var(--blue)}
+.pl-yes{background:rgba(99,230,176,.13);color:var(--mint)}
+.pl-no{background:rgba(86,90,103,.16);color:var(--dim)}
+.empty{padding:34px;text-align:center;color:var(--dim2);font-family:var(--mono);font-size:11.5px;letter-spacing:.06em}
+
+.prompt-preview{background:#07080B;border:1px dashed var(--hair2);padding:14px;font-family:var(--mono);
+ font-size:11px;color:var(--dim);white-space:pre-wrap;max-height:180px;overflow-y:auto;line-height:1.7;display:none}
+.linky{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim2);
+ cursor:pointer;border-bottom:1px dashed var(--dim2);transition:.25s}
+.linky:hover{color:var(--amber);border-color:var(--amber)}
+
+footer{border-top:1px solid var(--hair);margin-top:30px;padding:26px 0 30px;display:flex;justify-content:space-between;
+ flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:10.5px;color:var(--dim2);letter-spacing:.05em}
+footer a{color:var(--dim);border-bottom:1px dashed var(--dim2)}
+footer a:hover{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="warm"></div><div class="grain"></div>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14.5" stroke="#FF8A3D" stroke-width="1.2"/><path d="M16 16 L26 8" stroke="#FF8A3D" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="16" r="2.3" fill="#63E6B0"/></svg>
+    <span class="wm">voice-agents<sup>OSS</sup></span>
+  </div>
+  <div class="hstat"><span><span class="bulb"></span><span id="svstat">server online</span></span><a href="/api/docs" style="border-bottom:1px dashed var(--dim2)">api</a></div>
+</header>
+
+<section class="hero">
+  <div class="kick"><span class="ln"></span>Mission console</div>
+  <h1>Tell it what to do.<br/>It makes the <em>calls.</em></h1>
+  <p class="sub">Write plain instructions, point it at a call list, and the agent dials — discloses it's an AI, follows your mission, takes structured notes, and books meetings. Dry-run by default; guardrails (business hours, consent states, do-not-call) are enforced in the engine, not the UI.</p>
+</section>
+
+<div class="grid">
+  <!-- LEFT: mission + launch -->
+  <div>
+    <div class="panel">
+      <span class="brk b1"></span><span class="brk b2"></span><span class="brk b3"></span><span class="brk b4"></span>
+      <div class="phead"><span>01 · <b>mission</b></span><span class="linky" onclick="togglePreview()">view compiled prompt</span></div>
+      <div class="pbody">
+        <label>Instructions — what should the agent do on each call?</label>
+        <textarea id="mi"></textarea>
+        <div class="prompt-preview" id="preview"></div>
+        <div class="two">
+          <div><label>Your name</label><input type="text" id="mf"/></div>
+          <div><label>Company</label><input type="text" id="mc"/></div>
+        </div>
+        <div class="two">
+          <div><label>Booking link (cal.com / calendly)</label><input type="text" id="mb"/></div>
+          <div><label>Callback number</label><input type="text" id="mp"/></div>
+        </div>
+        <div class="row"><button class="btn" onclick="saveMission()">Save mission</button><span id="msaved" style="font-family:var(--mono);font-size:11px;color:var(--mint);opacity:0;transition:.4s">saved ✓</span></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:26px">
+      <span class="brk b1"></span><span class="brk b2"></span><span class="brk b3"></span><span class="brk b4"></span>
+      <div class="phead"><span>03 · <b>launch</b></span><span id="engstate"></span></div>
+      <div class="pbody">
+        <div class="three">
+          <div><label>Engine</label><select id="eng"><option value="vapi">Vapi (free credits)</option><option value="bland">Bland</option></select></div>
+          <div><label>Limit (0 = all)</label><input type="text" id="lim" value="0"/></div>
+          <div><label>&nbsp;</label><label class="switch"><input type="checkbox" id="live"/><span class="tog"></span><span class="lv">LIVE calls</span></label></div>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="launchBtn" onclick="launch()">Launch campaign</button>
+          <span style="font-family:var(--mono);font-size:10.5px;color:var(--dim2)" id="lstate">idle</span>
+        </div>
+      </div>
+      <div class="term" id="term"><span style="color:var(--dim2)">— campaign log · nothing running —</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: targets -->
+  <div>
+    <div class="panel">
+      <span class="brk b1"></span><span class="brk b2"></span><span class="brk b3"></span><span class="brk b4"></span>
+      <div class="phead"><span>02 · <b>call list</b></span><span id="tcount"></span></div>
+      <div style="max-height:340px;overflow-y:auto">
+        <table id="ttable"><thead><tr><th>company</th><th>phone</th><th>notes</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="pbody" style="border-top:1px solid var(--hair)">
+        <div class="two">
+          <div><label>Company</label><input type="text" id="nc"/></div>
+          <div><label>Phone</label><input type="text" id="np"/></div>
+        </div>
+        <div class="row">
+          <button class="btn" onclick="addTarget()">Add</button>
+          <label class="btn" style="cursor:pointer">Upload CSV<input type="file" id="csvf" accept=".csv" style="display:none" onchange="uploadCSV(this)"/></label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RESULTS -->
+<div class="panel" style="margin-bottom:10px">
+  <span class="brk b1"></span><span class="brk b2"></span><span class="brk b3"></span><span class="brk b4"></span>
+  <div class="phead"><span>04 · <b>notes & meetings</b></span><span id="rcount"></span></div>
+  <div style="overflow-x:auto">
+    <table id="rtable">
+      <thead><tr><th>company</th><th>status</th><th>meeting</th><th>who</th><th>notes / summary</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="empty" id="rempty">no results yet — launch a campaign</div>
+</div>
+
+<footer>
+  <span>voice-agents · open source · MIT</span>
+  <span>read COMPLIANCE.md before going live · AI discloses itself on every call</span>
+</footer>
+</div>
+
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let CFG=null;
+
+async function boot(){
+  try{
+    CFG=await (await fetch('/api/config')).json();
+    const m=CFG.mission;
+    $('mi').value=m.instructions; $('mf').value=m.founder; $('mc').value=m.company;
+    $('mb').value=m.booking_link; $('mp').value=m.callback_number;
+    $('preview').textContent=CFG.prompt_preview;
+    const v=CFG.engines.vapi.ready,b=CFG.engines.bland.ready;
+    $('engstate').innerHTML=
+      `<span class="engbadge ${v?'eng-ok':'eng-no'}">vapi ${v?'ready':'no keys'}</span> `+
+      `<span class="engbadge ${b?'eng-ok':'eng-no'}">bland ${b?'ready':'no keys'}</span>`;
+    loadTargets();
+  }catch(e){ $('svstat').textContent='server unreachable'; }
+}
+function togglePreview(){const p=$('preview');p.style.display=p.style.display==='block'?'none':'block';}
+
+async function saveMission(){
+  const body={instructions:$('mi').value,founder:$('mf').value,company:$('mc').value,
+    booking_link:$('mb').value,callback_number:$('mp').value,email:''};
+  const r=await (await fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+  $('preview').textContent=r.prompt_preview;
+  $('msaved').style.opacity=1; setTimeout(()=>$('msaved').style.opacity=0,1800);
+}
+
+async function loadTargets(){
+  const rows=await (await fetch('/api/targets')).json();
+  const tb=$('ttable').querySelector('tbody'); tb.innerHTML='';
+  rows.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${r.company||''}</td><td class="mono">${r.phone||''}</td><td class="mono">${(r.notes||'').slice(0,44)}</td>`;
+    tb.appendChild(tr);
+  });
+  $('tcount').textContent=rows.length+' targets';
+}
+async function addTarget(){
+  if(!$('nc').value||!$('np').value)return;
+  await fetch('/api/targets',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({company:$('nc').value,phone:$('np').value,notes:''})});
+  $('nc').value='';$('np').value=''; loadTargets();
+}
+async function uploadCSV(inp){
+  if(!inp.files.length)return;
+  const fd=new FormData(); fd.append('file',inp.files[0]);
+  await fetch('/api/targets/upload',{method:'POST',body:fd}); loadTargets();
+}
+
+async function launch(){
+  await saveMission();
+  const live=$('live').checked;
+  if(live && !confirm('LIVE mode: this places real phone calls and spends credits. Continue?'))return;
+  const body={engine:$('eng').value,live,limit:parseInt($('lim').value||'0'),ignore_hours:false};
+  const r=await fetch('/api/campaign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.status===409){alert('A campaign is already running.');return;}
+  $('launchBtn').disabled=true;
+}
+
+function cls(m){
+  if(m.startsWith('WOULD'))return 'would'; if(m.startsWith('ERROR')||m.startsWith('ABORT'))return 'err';
+  if(m.startsWith('done')||m.startsWith('campaign finished'))return 'ok';
+  if(m.startsWith('hold')||m.startsWith('skip'))return 'hold'; if(m.startsWith('calling'))return 'live'; return '';
+}
+async function poll(){
+  try{
+    const s=await (await fetch('/api/status')).json();
+    const c=s.campaign;
+    $('lstate').textContent=c.running?`running · ${c.placed}/${c.total} · ${c.engine} ${c.live?'LIVE':'dry'}`:'idle';
+    $('launchBtn').disabled=!!c.running;
+    if(c.log.length){
+      $('term').innerHTML=c.log.map(l=>`<div><span class="t">${l.t}</span><span class="${cls(l.m)}">${l.m}</span></div>`).join('');
+      $('term').scrollTop=$('term').scrollHeight;
+    }
+    const rows=s.results||[];
+    $('rcount').textContent=rows.length+' rows';
+    $('rempty').style.display=rows.length?'none':'block';
+    const tb=$('rtable').querySelector('tbody'); tb.innerHTML='';
+    rows.slice().reverse().forEach(r=>{
+      const mb=String(r.meeting_booked).toLowerCase()==='true';
+      const pill=r.status==='dry-run'?'<span class="pill pl-dry">dry</span>':
+        (mb?'<span class="pill pl-yes">booked</span>':'<span class="pill pl-no">'+(r.status||'—')+'</span>');
+      const who=[r.person_name,r.person_title].filter(Boolean).join(' · ');
+      const notes=[r.reporting_method,r.biggest_frustration,r.summary].filter(Boolean).join(' — ');
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${r.company||''}<div class="mono">${r.phone||''}</div></td><td>${pill}</td>`+
+        `<td class="mono">${mb?(r.meeting_time||'yes'):'—'}${r.followup_email?'<br/>'+r.followup_email:''}</td>`+
+        `<td class="mono">${who||'—'}</td><td style="color:var(--dim)">${notes||'—'}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){}
+}
+boot(); setInterval(poll,1500);
+</script>
+</body>
+</html>
