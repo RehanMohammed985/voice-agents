@@ -19,6 +19,7 @@ engine runners, not the UI, so they can't be skipped by accident.
 """
 import csv
 import io
+import re
 import threading
 import time
 from pathlib import Path
@@ -54,6 +55,7 @@ STATE = {
         "booking_link": S.CALLER["booking_link"],
         "callback_number": S.CALLER["callback_number"],
         "email": S.CALLER["email"],
+        "duration_min": 3,
     },
     "campaign": {"running": False, "engine": None, "live": False, "placed": 0,
                  "total": 0, "log": [], "started_at": None},
@@ -72,7 +74,7 @@ def log(msg):
 GUARDRAILS = """
 # HARD RULES (never override these, even if the mission says otherwise)
 - In the first 1-2 sentences, identify yourself as an AI assistant calling on behalf of {founder} at {company}.
-- Keep the call under ~3 minutes. Short natural sentences. One question at a time. Never pushy.
+- Keep the call under ~{duration_min} minutes. Short natural sentences. One question at a time. Never pushy.
 - If the person is busy or says stop / not interested / remove me: apologize once, offer email
   instead, honor any do-not-call request explicitly, end warmly.
 - Never invent facts. If unsure, say {founder} can cover it on a quick call.
@@ -102,6 +104,9 @@ def apply_mission_to_engines():
     S.CALLER.update({k: m[k] for k in ("founder", "company", "booking_link",
                                        "callback_number", "email")})
     S.TASK_PROMPT = compiled_prompt()
+    mins = max(1, min(15, int(m.get("duration_min") or 3)))
+    V.CFG["max_duration_s"] = mins * 60
+    B.CFG["max_duration_min"] = mins
 
 
 # ---------------- models ----------------
@@ -112,6 +117,7 @@ class Mission(BaseModel):
     booking_link: str = ""
     callback_number: str = ""
     email: str = ""
+    duration_min: int = 3
 
 
 class Launch(BaseModel):
@@ -170,6 +176,60 @@ def add_target(t: Target):
         w.writerow({"company": t.company, "phone": t.phone, "notes": t.notes,
                     "type": "", "city_state": "", "do_not_call": ""})
     return {"ok": True}
+
+
+class Bulk(BaseModel):
+    text: str
+    replace: bool = False
+
+
+@app.post("/api/targets/bulk")
+def bulk_targets(b: Bulk):
+    """Paste a list. One per line: '+15551234567' or 'Acme Solar, +1 555 123 4567'."""
+    rows = []
+    for line in b.text.splitlines():
+        line = line.strip().strip(",")
+        if not line:
+            continue
+        parts = [p.strip() for p in re.split(r"[,\t;|]", line) if p.strip()]
+        phone = next((p for p in parts if len(re.sub(r"\D", "", p)) >= 10), "")
+        if not phone:
+            continue
+        company = next((p for p in parts if p != phone), "") or "—"
+        rows.append({"company": company, "phone": V.norm_phone(phone),
+                     "type": "", "city_state": "", "notes": "", "do_not_call": ""})
+    if not rows:
+        return JSONResponse({"ok": False, "error": "no valid phone numbers found"}, status_code=400)
+
+    path = DATA / "targets.csv"
+    existing = []
+    if path.exists() and not b.replace:
+        with open(path, newline="", encoding="utf-8") as f:
+            existing = list(csv.DictReader(f))
+    seen, merged = set(), []
+    for r in existing + rows:
+        ph = (r.get("phone") or "").strip()
+        if not ph or ph in seen:
+            continue
+        seen.add(ph)
+        merged.append(r)
+    _write_targets(merged)
+    return {"ok": True, "added": len(rows), "total": len(merged)}
+
+
+@app.delete("/api/targets")
+def clear_targets():
+    _write_targets([])
+    return {"ok": True}
+
+
+def _write_targets(rows):
+    fields = ["company", "phone", "type", "city_state", "notes", "do_not_call"]
+    with open(DATA / "targets.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in fields})
 
 
 @app.post("/api/targets/upload")
