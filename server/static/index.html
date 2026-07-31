@@ -147,6 +147,7 @@ td.ph{font-family:var(--mono);font-size:12.5px;color:var(--ink2);white-space:now
     <a href="/api/docs" target="_blank">api</a>
     <a id="pvlink">prompt</a>
     <span id="engstate">—</span>
+    <span id="rtstate" title="how results come back / where state lives"></span>
   </nav>
 </header>
 
@@ -288,7 +289,7 @@ const j = async (u,o) => (await fetch(u,o)).json();
 const J = b => ({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const esc = s => String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
-let LIVE=false, DUR=3, TIMER=null;
+let LIVE=false, DUR=3, TIMER=null, WEBHOOK=false;
 
 const PRESETS = [
  {n:'Problem discovery', t:`Call each company. Reach whoever owns day-to-day operations.
@@ -347,6 +348,11 @@ async function boot(){
   const ready=Object.keys(c.engines||{}).filter(k=>c.engines[k].ready);
   $('engstate').textContent = ready.length ? ready.join(' · ')+' ready' : 'no keys — dry run only';
   $('dot').className = 'dot '+(ready.length?'':'off');
+  const rt = c.runtime;
+  if(rt){
+    $('rtstate').textContent = rt.mode==='webhook' ? 'webhook · '+rt.store : '';
+    WEBHOOK = rt.mode==='webhook';
+  }
   await loadTargets();
   poll();
 }
@@ -439,6 +445,9 @@ async function poll(){
       '</td><td class="ph">'+esc(r.followup_email||'')+'</td></tr>';
   }).join('');
 
+  // in webhook mode a campaign stays "running" while reports trickle in —
+  // keep polling even if this page was opened after launch.
+  if(run && !TIMER) TIMER=setInterval(poll,1400);
   if(!run && TIMER){ clearInterval(TIMER); TIMER=null; }
 }
 

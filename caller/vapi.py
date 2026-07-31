@@ -90,7 +90,7 @@ def within_window(e, ignore):
 def needs_consent(e): return AREACODE_STATE.get(ac(e), "") in TWO_PARTY_STATES
 
 
-def assistant_for(company: str, consent: bool) -> dict:
+def assistant_for(company: str, consent: bool, server_url: str = "", server_secret: str = "") -> dict:
     """Build a transient Vapi assistant from caller/script.py."""
     task = S.render(S.TASK_PROMPT)
     first = ("Hi — quick note before we start: this call may be recorded for quality. "
@@ -137,14 +137,21 @@ def assistant_for(company: str, consent: bool) -> dict:
         },
         "artifactPlan": {"recordingEnabled": CFG["record"]},
     }
+    if server_url:
+        # Vapi POSTs the end-of-call report here instead of us polling for it.
+        a["server"] = {"url": server_url}
+        if server_secret:
+            a["server"]["secret"] = server_secret
+        a["serverMessages"] = ["end-of-call-report"]
     return a
 
 
-def dispatch(company, e164):
+def dispatch(company, e164, server_url: str = "", server_secret: str = ""):
+    """Place the call and return its id immediately. Does not wait for the call."""
     body = {
         "phoneNumberId": CFG["phone_number_id"],
         "customer": {"number": e164},
-        "assistant": assistant_for(company, needs_consent(e164)),
+        "assistant": assistant_for(company, needs_consent(e164), server_url, server_secret),
         "metadata": {"company": company},
     }
     r = requests.post(f"{API}/call", headers={"Authorization": f"Bearer {CFG['api_key']}"},

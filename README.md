@@ -58,6 +58,16 @@ uvicorn server.app:app --reload
 The UI works immediately in **dry-run** with no keys — it validates your mission, list,
 timezones, and consent flags, and shows exactly who *would* be called. Add keys to go live.
 
+## Deploy it
+
+`vercel` — see [`DEPLOY.md`](DEPLOY.md). On a serverless host the app switches itself into
+**webhook mode**: calls are dispatched in one non-blocking pass and Vapi POSTs each
+end-of-call report to `/api/webhook/vapi`, instead of a thread polling until every call
+ends. State moves from local JSON to Upstash Redis. Both switches are a single env var
+each (`PUBLIC_BASE_URL`, `UPSTASH_REDIS_REST_URL`), and neither changes local development —
+with them unset you get files and polling exactly as before. `GET /api/health` tells you
+which mode a running instance is in.
+
 ## Run it on free credits
 
 You can run hundreds of real calls without paying cash. See [`CREDITS.md`](CREDITS.md) for the
@@ -86,6 +96,8 @@ The web UI is just a client of a small HTTP API — wire your product to the sam
 | `DELETE` | `/api/targets` | clear the list |
 | `POST` | `/api/campaign` | launch `{engine, live, limit, ignore_hours}` |
 | `GET`  | `/api/status` | live campaign state + streamed log + results |
+| `POST` | `/api/webhook/vapi` | Vapi's end-of-call report lands here (webhook mode) |
+| `GET`  | `/api/health` | run mode + storage backend |
 
 So your "give it simple instructions, it calls and books" flow is one `POST /api/mission`
 followed by `POST /api/campaign`, then poll `GET /api/status`. Interactive docs at `/api/docs`.
@@ -114,8 +126,11 @@ UI ("view compiled prompt") or via `GET /api/config`. Edit the guardrail wrapper
 ```
 voice-agents/
 ├─ server/
-│  ├─ app.py                 # FastAPI: mission compiler, campaign runner, live status
+│  ├─ app.py                 # FastAPI: mission compiler, campaign runner, webhook, status
+│  ├─ store.py               # state: local JSON files, or Upstash Redis when deployed
 │  └─ static/index.html      # the console (single file, no build step)
+├─ api/index.py              # Vercel entry point
+├─ vercel.json
 ├─ caller/
 │  ├─ script.py              # default mission, voicemail, extraction schema
 │  ├─ vapi.py                # Vapi engine (recommended)

@@ -5,3 +5,5 @@ data/results*.csv
 .DS_Store
 venv/
 .venv/
+data/state_*.json
+.vercel

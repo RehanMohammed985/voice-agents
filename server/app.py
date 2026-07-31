@@ -4,13 +4,29 @@ app.py — the web console for voice-agents.
 
 One page: write a plain-English mission ("call these companies, ask about X,
 book a 20-min meeting"), pick an engine, hit launch. The server compiles your
-mission into a guarded call prompt, dials the target list, and streams back
-notes + meetings as structured rows.
+mission into a guarded call prompt, dials the target list, and collects notes +
+meetings as structured rows.
 
     pip install -r requirements.txt
-    cp .env.example .env          # add engine keys when you're ready for --live
+    cp .env.example .env          # add engine keys when you're ready to go live
     uvicorn server.app:app --reload
     # open http://localhost:8000
+
+TWO RUN MODES — the app picks one for you:
+
+  polling mode   (default, local)   A background thread dials each number and
+                                    waits for the call to finish. Nothing to
+                                    configure; works on localhost.
+
+  webhook mode   (set PUBLIC_BASE_URL, e.g. on Vercel)
+                                    Calls are dispatched and the request
+                                    returns immediately; Vapi POSTs each
+                                    end-of-call report to /api/webhook/vapi.
+                                    Required on serverless, where background
+                                    threads are killed after the response.
+
+State lives in server/store.py — JSON files locally, Upstash Redis when its
+env vars are present. See DEPLOY.md.
 
 Safety: campaigns launch in DRY-RUN unless you flip the LIVE switch in the UI
 *and* the selected engine's keys are present. Guardrails (AI disclosure,
@@ -19,55 +35,70 @@ engine runners, not the UI, so they can't be skipped by accident.
 """
 import csv
 import io
+import os
 import re
 import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from caller import campaign as B
 from caller import script as S
 from caller import vapi as V
-from caller import campaign as B
+from server import store
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
-DATA.mkdir(exist_ok=True)
 
 app = FastAPI(title="voice-agents", docs_url="/api/docs")
 
-# ---------------- state ----------------
-STATE = {
-    "mission": {
-        "instructions": (
-            "Call each company. Reach whoever handles solar asset management, O&M, or plant "
-            "operations. Ask: (1) do they run sites across multiple inverter brands / portals? "
-            "(2) how do they produce monthly performance & availability reporting today, and who "
-            "owns it? (3) what's the most annoying part of monitoring or reporting across their "
-            "fleet? If they show any interest, offer a 20-minute call with the founder and "
-            "capture their email and a rough time."
-        ),
-        "founder": S.CALLER["founder"],
-        "company": S.CALLER["company"],
-        "booking_link": S.CALLER["booking_link"],
-        "callback_number": S.CALLER["callback_number"],
-        "email": S.CALLER["email"],
-        "duration_min": 3,
-    },
-    "campaign": {"running": False, "engine": None, "live": False, "placed": 0,
-                 "total": 0, "log": [], "started_at": None},
-    "results": [],
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+LOG_CAP = 200
+
+
+def webhook_mode() -> bool:
+    """True when Vapi can reach us — then we never block waiting on a call."""
+    return bool(PUBLIC_BASE_URL)
+
+
+def webhook_url() -> str:
+    return f"{PUBLIC_BASE_URL}/api/webhook/vapi" if PUBLIC_BASE_URL else ""
+
+
+# ---------------- defaults ----------------
+DEFAULT_MISSION = {
+    "instructions": (
+        "Call each company. Reach whoever handles solar asset management, O&M, or plant "
+        "operations. Ask: (1) do they run sites across multiple inverter brands / portals? "
+        "(2) how do they produce monthly performance & availability reporting today, and who "
+        "owns it? (3) what's the most annoying part of monitoring or reporting across their "
+        "fleet? If they show any interest, offer a 20-minute call with the founder and "
+        "capture their email and a rough time."
+    ),
+    "founder": S.CALLER["founder"],
+    "company": S.CALLER["company"],
+    "booking_link": S.CALLER["booking_link"],
+    "callback_number": S.CALLER["callback_number"],
+    "email": S.CALLER["email"],
+    "duration_min": 3,
 }
-LOCK = threading.Lock()
+IDLE_CAMPAIGN = {"running": False, "engine": None, "live": False, "placed": 0,
+                 "total": 0, "started_at": None}
+
+
+def mission() -> dict:
+    m = dict(DEFAULT_MISSION)
+    m.update(store.get("mission", {}) or {})
+    return m
 
 
 def log(msg):
-    with LOCK:
-        STATE["campaign"]["log"].append({"t": time.strftime("%H:%M:%S"), "m": msg})
-        STATE["campaign"]["log"] = STATE["campaign"]["log"][-200:]
+    store.append("log", {"t": time.strftime("%H:%M:%S"), "m": msg}, cap=LOG_CAP)
 
 
 # ---------------- mission -> prompt ----------------
@@ -86,24 +117,23 @@ GUARDRAILS = """
 # MEETINGS
 If they agree to a meeting: capture their email and a rough day/time, tell them a booking link
 ({booking_link}) and calendar invite will follow. If they'd rather get an email, capture the
-address. Read any captured email back to confirm it.
+address. Read any captured email back to confirm.
 
 # TONE
 Warm, curious, efficient, a little deferential — you are learning from a busy expert.
 """
 
 
-def compiled_prompt() -> str:
-    m = STATE["mission"]
-    return GUARDRAILS.format(**m)
+def compiled_prompt(m=None) -> str:
+    return GUARDRAILS.format(**(m or mission()))
 
 
-def apply_mission_to_engines():
+def apply_mission_to_engines(m=None):
     """Push the mission into the shared script module the engines read."""
-    m = STATE["mission"]
+    m = m or mission()
     S.CALLER.update({k: m[k] for k in ("founder", "company", "booking_link",
                                        "callback_number", "email")})
-    S.TASK_PROMPT = compiled_prompt()
+    S.TASK_PROMPT = compiled_prompt(m)
     mins = max(1, min(15, int(m.get("duration_min") or 3)))
     V.CFG["max_duration_s"] = mins * 60
     B.CFG["max_duration_min"] = mins
@@ -133,54 +163,83 @@ class Target(BaseModel):
     notes: str = ""
 
 
+class Bulk(BaseModel):
+    text: str
+    replace: bool = False
+
+
+# ---------------- targets ----------------
+TFIELDS = ["company", "phone", "type", "city_state", "notes", "do_not_call"]
+
+
+def _seed_targets():
+    """First boot: use the CSV shipped in the repo, then keep state in the store."""
+    path = DATA / "targets.csv"
+    if not path.exists():
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return [{k: r.get(k, "") for k in TFIELDS} for r in csv.DictReader(f)]
+
+
+def targets() -> list:
+    t = store.get("targets")
+    if t is None:
+        t = _seed_targets()
+        store.set("targets", t)
+    return t
+
+
+def set_targets(rows):
+    clean = [{k: r.get(k, "") for k in TFIELDS} for r in rows]
+    store.set("targets", clean)
+    try:                                   # keep the CSV in sync when disk is writable
+        with open(DATA / "targets.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=TFIELDS)
+            w.writeheader()
+            w.writerows(clean)
+    except OSError:
+        pass
+    return clean
+
+
 # ---------------- api ----------------
 @app.get("/api/config")
 def config():
-    import os
+    m = mission()
     return {
         "engines": {
             "vapi": {"ready": bool(os.getenv("VAPI_API_KEY") and os.getenv("VAPI_PHONE_NUMBER_ID")),
-                      "hint": "VAPI_API_KEY + VAPI_PHONE_NUMBER_ID in .env"},
+                     "hint": "VAPI_API_KEY + VAPI_PHONE_NUMBER_ID"},
             "bland": {"ready": bool(os.getenv("BLAND_API_KEY")),
-                       "hint": "BLAND_API_KEY in .env"},
+                      "hint": "BLAND_API_KEY"},
         },
-        "mission": STATE["mission"],
-        "prompt_preview": compiled_prompt(),
+        "mission": m,
+        "prompt_preview": compiled_prompt(m),
+        "runtime": {"mode": "webhook" if webhook_mode() else "polling",
+                    "store": store.backend(),
+                    "webhook_url": webhook_url()},
     }
 
 
 @app.post("/api/mission")
 def set_mission(m: Mission):
-    STATE["mission"].update(m.dict())
-    apply_mission_to_engines()
-    return {"ok": True, "prompt_preview": compiled_prompt()}
+    merged = store.merge("mission", m.dict())
+    full = dict(DEFAULT_MISSION); full.update(merged)
+    apply_mission_to_engines(full)
+    return {"ok": True, "prompt_preview": compiled_prompt(full)}
 
 
 @app.get("/api/targets")
 def get_targets():
-    path = DATA / "targets.csv"
-    if not path.exists():
-        return []
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+    return targets()
 
 
 @app.post("/api/targets")
 def add_target(t: Target):
-    path = DATA / "targets.csv"
-    exists = path.exists()
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["company", "phone", "type", "city_state", "notes", "do_not_call"])
-        if not exists:
-            w.writeheader()
-        w.writerow({"company": t.company, "phone": t.phone, "notes": t.notes,
-                    "type": "", "city_state": "", "do_not_call": ""})
+    rows = targets() + [{"company": t.company, "phone": V.norm_phone(t.phone),
+                         "notes": t.notes, "type": "", "city_state": "", "do_not_call": ""}]
+    set_targets(rows)
     return {"ok": True}
-
-
-class Bulk(BaseModel):
-    text: str
-    replace: bool = False
 
 
 @app.post("/api/targets/bulk")
@@ -201,35 +260,16 @@ def bulk_targets(b: Bulk):
     if not rows:
         return JSONResponse({"ok": False, "error": "no valid phone numbers found"}, status_code=400)
 
-    path = DATA / "targets.csv"
-    existing = []
-    if path.exists() and not b.replace:
-        with open(path, newline="", encoding="utf-8") as f:
-            existing = list(csv.DictReader(f))
+    base = [] if b.replace else targets()
     seen, merged = set(), []
-    for r in existing + rows:
+    for r in base + rows:
         ph = (r.get("phone") or "").strip()
         if not ph or ph in seen:
             continue
         seen.add(ph)
         merged.append(r)
-    _write_targets(merged)
+    set_targets(merged)
     return {"ok": True, "added": len(rows), "total": len(merged)}
-
-
-@app.delete("/api/targets")
-def clear_targets():
-    _write_targets([])
-    return {"ok": True}
-
-
-def _write_targets(rows):
-    fields = ["company", "phone", "type", "city_state", "notes", "do_not_call"]
-    with open(DATA / "targets.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k, "") for k in fields})
 
 
 @app.post("/api/targets/upload")
@@ -238,59 +278,48 @@ async def upload_targets(file: UploadFile = File(...)):
     rows = list(csv.DictReader(io.StringIO(text)))
     if not rows or "phone" not in rows[0] or "company" not in rows[0]:
         return JSONResponse({"ok": False, "error": "CSV needs company and phone columns"}, status_code=400)
-    with open(DATA / "targets.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["company", "phone", "type", "city_state", "notes", "do_not_call"])
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k, "") for k in ["company", "phone", "type", "city_state", "notes", "do_not_call"]})
+    for r in rows:
+        r["phone"] = V.norm_phone(r.get("phone", ""))
+    set_targets(rows)
     return {"ok": True, "count": len(rows)}
+
+
+@app.delete("/api/targets")
+def clear_targets():
+    set_targets([])
+    return {"ok": True}
 
 
 @app.get("/api/status")
 def status():
-    with LOCK:
-        return {"campaign": STATE["campaign"], "results": STATE["results"][-100:]}
+    c = dict(IDLE_CAMPAIGN)
+    c.update(store.get("campaign", {}) or {})
+    results = store.get("results", []) or []
+    # in webhook mode nothing tells us "done" — the call count does
+    if c.get("running") and c.get("dispatched") and len(results) >= c["dispatched"]:
+        c["running"] = False
+        store.merge("campaign", {"running": False})
+    c["log"] = store.get("log", []) or []
+    return {"campaign": c, "results": results[-100:]}
 
 
 @app.post("/api/campaign")
 def launch(l: Launch):
-    if STATE["campaign"]["running"]:
+    cur = store.get("campaign", {}) or {}
+    if cur.get("running"):
         return JSONResponse({"ok": False, "error": "a campaign is already running"}, status_code=409)
     apply_mission_to_engines()
-    t = threading.Thread(target=run_campaign, args=(l,), daemon=True)
-    t.start()
+
+    if webhook_mode() or not l.live:
+        return _run(l, blocking=True)          # fast: dispatch (or validate) inline
+    threading.Thread(target=_run, args=(l,), daemon=True).start()
     return {"ok": True}
 
 
-# ---------------- the campaign loop ----------------
-def run_campaign(l: Launch):
-    eng = V if l.engine == "vapi" else B
-    with LOCK:
-        STATE["campaign"].update({"running": True, "engine": l.engine, "live": l.live,
-                                  "placed": 0, "log": [], "started_at": time.time()})
-        STATE["results"] = []
-
-    targets = []
-    path = DATA / "targets.csv"
-    if path.exists():
-        with open(path, newline="", encoding="utf-8") as f:
-            targets = list(csv.DictReader(f))
-    with LOCK:
-        STATE["campaign"]["total"] = len(targets)
-    log(f"{'LIVE' if l.live else 'DRY RUN'} · engine={l.engine} · {len(targets)} targets loaded")
-
-    if l.live:
-        import os
-        need = {"vapi": ["VAPI_API_KEY", "VAPI_PHONE_NUMBER_ID"], "bland": ["BLAND_API_KEY"]}[l.engine]
-        missing = [k for k in need if not os.getenv(k)]
-        if missing:
-            log(f"ABORT: missing {', '.join(missing)} in .env — running nothing.")
-            with LOCK:
-                STATE["campaign"]["running"] = False
-            return
-
-    placed = 0
-    for row in targets:
+# ---------------- the campaign ----------------
+def _eligible(l: Launch):
+    """Yield (company, e164, why, consent) for every target we may legally call now."""
+    for row in targets():
         company = (row.get("company") or "").strip()
         e164 = V.norm_phone(row.get("phone", ""))
         if not e164:
@@ -300,57 +329,128 @@ def run_campaign(l: Launch):
         ok, why = V.within_window(e164, l.ignore_hours)
         if not ok:
             log(f"hold {company} {e164} — {why}"); continue
+        yield company, e164, why, V.needs_consent(e164)
+
+
+def _run(l: Launch, blocking=False):
+    all_targets = targets()
+    store.set("log", [])
+    store.set("results", [])
+    store.set("campaign", {"running": True, "engine": l.engine, "live": l.live,
+                           "placed": 0, "total": len(all_targets), "dispatched": 0,
+                           "started_at": time.time()})
+    mode = "webhook" if webhook_mode() else "polling"
+    log(f"{'LIVE' if l.live else 'DRY RUN'} · engine={l.engine} · {len(all_targets)} targets · {mode} mode")
+
+    if l.live:
+        need = {"vapi": ["VAPI_API_KEY", "VAPI_PHONE_NUMBER_ID"], "bland": ["BLAND_API_KEY"]}[l.engine]
+        missing = [k for k in need if not os.getenv(k)]
+        if missing:
+            log(f"ABORT: missing {', '.join(missing)} — running nothing.")
+            store.merge("campaign", {"running": False})
+            return {"ok": False, "error": f"missing {', '.join(missing)}"}
+        if webhook_mode() and l.engine == "bland":
+            log("note: webhook mode currently returns results for Vapi only.")
+
+    placed = 0
+    for company, e164, why, consent in _eligible(l):
         if l.limit and placed >= l.limit:
             log(f"reached limit {l.limit}"); break
+        tag = " +consent-line" if consent else ""
 
-        consent = " +consent-line" if V.needs_consent(e164) else ""
         if not l.live:
-            log(f"WOULD CALL {company} {e164} ({why}){consent}")
-            with LOCK:
-                STATE["results"].append({"company": company, "phone": e164, "status": "dry-run",
-                                          "summary": "validated — would call", "meeting_booked": ""})
+            log(f"WOULD CALL {company} {e164} ({why}){tag}")
+            store.append("results", {"company": company, "phone": e164, "status": "dry-run",
+                                     "summary": "validated — would call", "meeting_booked": ""})
             placed += 1
-            with LOCK:
-                STATE["campaign"]["placed"] = placed
-            time.sleep(0.15)
+            store.merge("campaign", {"placed": placed, "dispatched": placed})
             continue
 
-        log(f"calling {company} {e164}{consent} …")
+        log(f"calling {company} {e164}{tag} …")
         try:
             if l.engine == "vapi":
-                cid = V.dispatch(company, e164)
-                call = V.fetch(cid)
-                data = V.extract(call)
-                rec = {"company": company, "phone": e164, "call_id": cid,
-                       "status": call.get("status", ""), "cost_usd": call.get("cost", ""), **data}
-                V.write_result(rec, DATA / "results_vapi.csv")
+                cid = V.dispatch(company, e164, webhook_url(), WEBHOOK_SECRET)
+                if webhook_mode():
+                    log(f"dispatched {company} · awaiting report")
+                else:
+                    call = V.fetch(cid)
+                    rec = {"company": company, "phone": e164, "call_id": cid,
+                           "status": call.get("status", ""), "ended_reason": call.get("endedReason", ""),
+                           "cost_usd": call.get("cost", ""), **V.extract(call)}
+                    store.append("results", rec)
+                    V.write_result(rec, DATA / "results_vapi.csv")
+                    log(f"done {company} · status={rec.get('status')} · meeting={rec.get('meeting_booked','')}")
             else:
-                payload = B.build_task(company, e164)
-                resp = B.send_call(payload)
+                resp = B.send_call(B.build_task(company, e164))
                 cid = resp.get("call_id", "")
-                call = B.poll_call(cid)
-                answers = B.analyze_call(cid) if call.get("completed") else []
-                rec = B.result_row(company, e164, {**call, "call_id": cid}, answers)
-                B.write_result(rec, DATA / "results.csv")
-            with LOCK:
-                STATE["results"].append(rec)
-            log(f"done {company} · status={rec.get('status')} · meeting={rec.get('meeting_booked','')}")
+                if not webhook_mode():
+                    call = B.poll_call(cid)
+                    answers = B.analyze_call(cid) if call.get("completed") else []
+                    rec = B.result_row(company, e164, {**call, "call_id": cid}, answers)
+                    store.append("results", rec)
+                    B.write_result(rec, DATA / "results.csv")
+                    log(f"done {company} · status={rec.get('status')}")
+                else:
+                    log(f"dispatched {company}")
         except Exception as e:
             log(f"ERROR {company}: {e}")
         placed += 1
-        with LOCK:
-            STATE["campaign"]["placed"] = placed
-        time.sleep(V.CFG["seconds_between_calls"])
+        store.merge("campaign", {"placed": placed, "dispatched": placed})
+        if not webhook_mode():
+            time.sleep(V.CFG["seconds_between_calls"])
 
-    log(f"campaign finished · {placed} {'planned' if not l.live else 'placed'}")
-    with LOCK:
-        STATE["campaign"]["running"] = False
+    if webhook_mode() and l.live:
+        log(f"{placed} call(s) dispatched · results arrive as each call ends")
+    else:
+        log(f"campaign finished · {placed} {'planned' if not l.live else 'placed'}")
+        store.merge("campaign", {"running": False})
+    return {"ok": True, "dispatched": placed}
+
+
+# ---------------- vapi webhook ----------------
+@app.post("/api/webhook/vapi")
+async def vapi_webhook(request: Request):
+    """Vapi POSTs the end-of-call report here. One row per completed call."""
+    if WEBHOOK_SECRET and request.headers.get("x-vapi-secret") != WEBHOOK_SECRET:
+        return JSONResponse({"ok": False, "error": "bad secret"}, status_code=401)
+
+    body = await request.json()
+    msg = body.get("message", body) or {}
+    if msg.get("type") not in (None, "end-of-call-report"):
+        return {"ok": True, "ignored": msg.get("type")}
+
+    call = msg.get("call") or {}
+    analysis = msg.get("analysis") or call.get("analysis") or {}
+    company = ((call.get("metadata") or {}).get("company")
+               or (msg.get("assistant") or {}).get("name") or "—")
+    phone = (call.get("customer") or {}).get("number", "")
+
+    rec = {"company": company, "phone": phone, "call_id": call.get("id", ""),
+           "status": msg.get("endedReason") or call.get("status", "ended"),
+           "ended_reason": msg.get("endedReason", ""),
+           "cost_usd": msg.get("cost", call.get("cost", "")),
+           **V.extract({"analysis": analysis})}
+    store.append("results", rec)
+    log(f"report {company} · meeting={rec.get('meeting_booked','')}")
+
+    c = store.get("campaign", {}) or {}
+    if c.get("dispatched") and len(store.get("results", []) or []) >= c["dispatched"]:
+        store.merge("campaign", {"running": False})
+        log("campaign finished · all reports received")
+    return {"ok": True}
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True, "mode": "webhook" if webhook_mode() else "polling",
+            "store": store.backend()}
 
 
 # ---------------- static frontend ----------------
-app.mount("/static", StaticFiles(directory=str(ROOT / "server" / "static")), name="static")
+STATIC = ROOT / "server" / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 
 @app.get("/")
 def index():
-    return FileResponse(str(ROOT / "server" / "static" / "index.html"))
+    return FileResponse(str(STATIC / "index.html"))
