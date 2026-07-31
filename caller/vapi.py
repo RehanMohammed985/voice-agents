@@ -44,7 +44,7 @@ CFG = {
     "model_provider": os.getenv("VAPI_MODEL_PROVIDER", "openai"),
     "model": os.getenv("VAPI_MODEL", "gpt-4o-mini"),
     "voice_provider": os.getenv("VAPI_VOICE_PROVIDER", "vapi"),
-    "voice": os.getenv("VAPI_VOICE", "Paige"),
+    "voice": os.getenv("VAPI_VOICE", "Elliot"),
     "max_duration_s": int(os.getenv("MAX_DURATION_MIN", "6")) * 60,
     "call_window_start": int(os.getenv("CALL_WINDOW_START", "9")),
     "call_window_end": int(os.getenv("CALL_WINDOW_END", "17")),
