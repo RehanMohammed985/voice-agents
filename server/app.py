@@ -454,3 +454,17 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 @app.get("/")
 def index():
     return FileResponse(str(STATIC / "index.html"))
+
+
+@app.get("/{full_path:path}")
+def spa(full_path: str):
+    """
+    Serve the console for anything that isn't an API route.
+
+    Serverless hosts don't always hand the function the original URL — Vercel's
+    catch-all rewrite can arrive as /api/index.py. Rather than 404 the homepage,
+    anything that isn't /api/* gets the console.
+    """
+    if full_path.startswith("api/") and not full_path.startswith("api/index"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return FileResponse(str(STATIC / "index.html"))
