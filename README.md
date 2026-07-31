@@ -21,8 +21,11 @@ also drive it from your own app server.
 ## What it does
 
 1. **You write a mission** — e.g. *"Call each company, reach whoever runs operations, ask
-   how they handle X, and book a 20-minute call if they're interested."*
-2. **You give it a call list** — add rows in the UI or upload a CSV (`company, phone`).
+   how they handle X, and book a 20-minute call if they're interested."* Five customer-discovery
+   templates (problem discovery, willingness to pay, why they switched, book the meeting) are one
+   click away, and you set how long each call may run.
+2. **You give it a call list** — paste numbers one per line (bare, or `Company, number`),
+   or upload a CSV. Duplicates are dropped.
 3. **It runs the campaign** — dials each number through a real voice platform, has the
    conversation, and after each call extracts structured fields (who you reached, their
    answers, whether a meeting was booked, their email, sentiment, a summary).
@@ -78,7 +81,9 @@ The web UI is just a client of a small HTTP API — wire your product to the sam
 | `POST` | `/api/mission` | set instructions / founder / booking link (returns compiled prompt) |
 | `GET`  | `/api/targets` | list the call list |
 | `POST` | `/api/targets` | add one `{company, phone, notes}` |
+| `POST` | `/api/targets/bulk` | paste a list — `{text, replace}`, any format, deduped |
 | `POST` | `/api/targets/upload` | replace the list from a CSV upload |
+| `DELETE` | `/api/targets` | clear the list |
 | `POST` | `/api/campaign` | launch `{engine, live, limit, ignore_hours}` |
 | `GET`  | `/api/status` | live campaign state + streamed log + results |
 
