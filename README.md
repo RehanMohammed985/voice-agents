@@ -4,6 +4,8 @@
 
 **Give it plain instructions. It calls the companies, follows the mission, takes notes, and books meetings.**
 
+As I build my startup, calls can get annoying when you have so much on your plate. hence why this exists!!
+
 An open-source AI cold-calling console. Write a mission in plain English, point it at a
 call list, hit launch — the agent dials each number, discloses it's an AI, runs your
 instructions, captures structured notes, and schedules meetings. Built to run on free
